@@ -1,4 +1,4 @@
-# SICSS-Lingnan
+# SICSS-Lingnan Unsupervised Text Analysis
 Unsupervised Text Analysis Workshop (June 18, 2025)
 
 These are the materials for the first session of the Summer Institute in Computational Social Science (SICSS) held at Lingnan University.
