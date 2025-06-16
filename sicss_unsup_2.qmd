@@ -1,0 +1,323 @@
+---
+title: "sicss_unsup_2"
+date: June 18, 2025
+instructor: Frankie Ho Chun WONG
+---
+
+## Similarity
+
+To systematically estimate the similarity (hence, the difference) between documents, we need math!
+
+```{r}
+Sys.setLanguage("en")  
+```
+
+**Install the packages (for the first time)**
+
+```{r}
+install.packages("quanteda") 
+install.packages("quanteda.textplots") 
+install.packages("quanteda.textstats") 
+install.packages("ggplot2")
+install.packages("text2vec")
+install.packages("factoextra")
+install.packages("NbClust")
+install.packages("rainette")
+```
+
+**Load packages**
+
+```{r}
+library("quanteda") 
+library("quanteda.textplots") 
+library("quanteda.textstats") 
+library("ggplot2")
+library("text2vec")
+```
+
+#Begin
+
+**Obtain sample data**
+
+```{r}
+dat<-data_corpus_inaugural 
+attributes(dat)$docvar |> head() #same as head(attributes(data)$docvar)
+```
+
+### Euclidean distance 
+
+Find the shortest distance between two documents in a vector space.
+
+Check the list of speeches in the dataset
+
+```{r}
+attributes(dat)$docvar$docid_ |> unique() |> data.frame()
+```
+
+Let's consider the following example: the distance between "2009-Obama" \~ "2013-Obama" compared to "2013-Obama"\~"2017-Trump"
+
+First, sample the documents from the dataset
+
+```{r}
+sample_dfm<-corpus_subset(data_corpus_inaugural, 
+                  docid_ %in% c("2009-Obama","2013-Obama","2017-Trump")) |>
+  tokens(remove_punct = TRUE) |>
+  tokens_remove(stopwords("english")) |>
+  dfm() |>
+  dfm_trim(min_termfreq = 5, verbose = FALSE)
+sample_dfm
+```
+
+The distances (dissimilarities) between documents
+
+```{r}
+sample_dfm |> as.matrix()|>
+  dist(method="euclidean")
+```
+
+#### Cosine similarities between documents
+
+Cosine of the angle between two vectors
+
+```{r}
+sample_dfm|> as.matrix()|>
+  sim2(method="cosine")
+```
+
+## Clustering
+
+Clean dataset
+
+```{r}
+#clean dataset
+data_dfm<-data_corpus_inaugural |>
+  tokens(remove_punct = TRUE) |>
+  tokens_remove(stopwords("english")) |>
+  dfm() |>
+  dfm_trim(min_termfreq = 5, verbose = FALSE)
+data_dfm 
+```
+
+### Hierarchical clustering with cosine similarity
+
+```{r}
+#load the packages needed
+library(factoextra)
+library(NbClust)
+```
+
+First, the document distance matrix is calculated.
+
+```{r}
+dis_mx_cos <- data_dfm |> dist2(method = "cosine")
+
+```
+
+Visualize the distance matrix
+
+```{r}
+dis_mx_cos |> get_dist() |> fviz_dist()
+```
+
+Second, hierarchical clustering is performed
+
+```{r}
+hier_data <- dis_mx_cos |> as.dist() |> hcut(hc_method = "ward.D2")
+```
+
+Finally, visualize the dendrogram
+
+```{r}
+hier_data |> fviz_dend(cex=.5, horiz = TRUE)
+```
+
+*Alternatives*
+
+```{r}
+#tf_idf
+dis_mx_cos_tf_idf <- data_dfm |> dfm_tfidf() |> dist2(method = "cosine")
+
+hier_data_tf_idf <- dis_mx_cos_tf_idf |> as.dist() |> hcut(hc_method = "ward.D2")
+
+hier_data_tf_idf |> fviz_dend(cex=.5, horiz = TRUE)
+```
+
+To address "Sparsity will be lost - worth to calculate similarity instead of distance," similarity matrix is calculated instead
+
+```{r}
+library(sarp.snowprofile.alignment)
+
+sim_mx_cos <- data_dfm |> sim2(method = "cosine")
+
+sim_mx_cos |> as.matrix() |> hcut(hc_method = "ward.D2") |> fviz_dend(cex=.5, horiz = TRUE)
+```
+
+Specify the number of clusters
+
+```{r}
+dis_mx_cos |> as.dist() |> hcut(k = 4, hc_method = "ward.D2") |> fviz_dend(cex=.5, horiz = TRUE)
+```
+
+## k-means clustering
+
+Set seed (control for randomness for consistent results)
+
+```{r}
+set.seed(852)
+```
+
+k-means clustering with dfm
+
+```{r}
+kmeans_data <- data_dfm |> kmeans(4)
+```
+
+Visualize the clusters
+
+```{r}
+fviz_cluster(kmeans_data,data=data_dfm)
+```
+
+Alternative, cluster with tf-idf
+
+```{r}
+kmeans_data_tfidf <- data_dfm |> dfm_tfidf() |> kmeans(4)
+
+kmeans_data_tfidf |> fviz_cluster(data=data_dfm)
+```
+
+Get the clusters
+
+```{r}
+kmeans_data_tfidf$cluster |> as.data.frame()
+```
+
+To improve the stability of clusters, use a higher "nstart" (random initial centroids)
+
+```{r}
+
+kmeans_data_tfidf <- data_dfm |> dfm_tfidf() |> kmeans(4,nstart=25)
+
+kmeans_data_tfidf |> fviz_cluster(data=data_dfm)
+```
+
+# Find the number of topics k
+
+Standardize the data
+
+#ggplot2 syntax used in fviz_nbclust
+
+```{r}
+data_sd <- scale(data_dfm)
+```
+
+Elbow method
+
+```{r}
+fviz_nbclust(data_sd, kmeans, method = "wss") + geom_vline(xintercept = 4, linetype = 2)+ labs(subtitle = "Elbow method")
+```
+
+Silhouette method​
+
+```{r}
+fviz_nbclust(data_sd, kmeans, method = "silhouette")+ labs(subtitle = "Silhouette method")
+```
+
+Gap Statistics
+
+```{r}
+set.seed(852) 
+fviz_nbclust(data_sd, kmeans, nstart = 25, method = "gap_stat", nboot = 5)+ labs(subtitle = "Gap statistic method") #increase nboot for robustness 
+```
+
+Try with "hcut" ("hierarchical")
+
+```{r}
+fviz_nbclust(data_sd, hcut, method = "wss") + geom_vline(xintercept = 4, linetype = 2)+ labs(subtitle = "Elbow method")
+```
+
+```{r}
+fviz_nbclust(data_sd, hcut, method = "silhouette")+ labs(subtitle = "Silhouette method")
+```
+
+```{r}
+set.seed(852) 
+fviz_nbclust(data_sd, hcut, nstart = 25, method = "gap_stat", nboot = 5)+ labs(subtitle = "Gap statistic method") #increase nboot for robustness 
+```
+
+### Divisive approach with Reinert Method Using R package rainette
+
+Load the package
+
+```{r}
+library(rainette)
+```
+
+rainette runs on short and homogeneous text. Thus, the data should be split into smaller chunks
+
+```{r}
+## Split documents into segments
+data_corpus_split <- split_segments(data_corpus_inaugural, segment_size = 40)
+```
+
+```{r}
+#clean dataset
+data_split_dfm<-data_corpus_split |>
+  tokens(remove_punct = TRUE) |>
+  tokens_remove(stopwords("english")) |>
+  dfm() |>
+  dfm_trim(min_termfreq = 5, verbose = FALSE)
+data_split_dfm
+```
+
+Run rainette
+
+```{r}
+Rein_clust <- data_split_dfm |> rainette(k=6, min_segment_size = 10) 
+```
+
+Explore the clusters
+
+```{r}
+rainette_explor(Rein_clust, data_split_dfm, data_corpus_split)
+```
+
+Get a summary of the number of segments in each cluster
+
+```{r}
+data_corpus_split$cluster <- cutree(Rein_clust, k = 4) #choose the desired k value
+data_corpus_split |> clusters_by_doc_table(clust_var = "cluster")
+```
+
+To improve robustness, the double clustering approach can be applied.
+
+First, we need to compute two models with different segment size (min. number of terms in segments)
+
+```{r}
+Rein_clust_10 <- data_split_dfm |> rainette(k=4, min_segment_size = 10) 
+Rein_clust_15 <- data_split_dfm |> rainette(k=4, min_segment_size = 15) 
+
+```
+
+Combine
+
+```{r}
+Rein_clust_double <- rainette2(Rein_clust_10, Rein_clust_15, max_k = 6)
+
+```
+
+Alternative: "Classic analysis"
+
+```{r}
+Rein_clust_double <- rainette2(Rein_clust_10, Rein_clust_15, max_k = 5, full = FALSE) #"classical" analysis
+```
+
+Explore
+
+```{r}
+rainette2_explor(Rein_clust_double, data_split_dfm, data_corpus_split)
+```
+
+# 
+
+#End
