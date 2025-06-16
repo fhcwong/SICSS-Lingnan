@@ -1,0 +1,401 @@
+---
+title: "sicss_unsup_3"
+date: June 18, 2025
+instructor: Frankie Ho Chun WONG
+---
+
+## Topic modeling
+
+This demo introduces various approaches to find common topics from a set of documents.
+
+```{r}
+Sys.setLanguage("en")  
+```
+
+**Install the packages (for the first time)**
+
+```{r}
+install.packages("quanteda")
+install.packages("quanteda.textplots")
+install.packages("quanteda.textstats")
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages("tidytext")
+install.packages("tidyr")
+install.packages("readxl")
+install.packages("topicmodels")
+install.packages("wordcloud")
+install.packages("devtools")
+install.packages("topicdoc")
+install.packages("stm")
+```
+
+```{r}
+devtools::install_github("nikita-moor/ldatuning")
+```
+
+**Load packages**
+
+```{r}
+library("quanteda")
+library("quanteda.textplots")
+library("quanteda.textstats")
+library("ggplot2")
+library("dplyr")
+library("tidytext")
+library("tidyr")
+library("readxl")
+library("topicmodels")
+library("wordcloud")
+library("ldatuning")
+```
+
+#Begin
+
+**Obtain sample data**
+
+```{r}
+dat<- read_excel("demo_rss_world_news_mar2025.xlsx")
+nrow(dat)
+```
+
+\[For Demo purposes: sub-sample of n = 1000\]
+
+```{r}
+dat <- dat[1:1000,]
+
+corp_dat <- corpus(dat, text_field = "text")
+attributes(corp_dat)$docvar |> head() #same as head(attributes(data)$docvar)
+```
+
+**Tokenize text and create a document-feature matrix**
+
+```{r}
+dfmat_news <- corp_dat |>
+    tokens(remove_punct = TRUE) |>
+    tokens_remove(pattern = stopwords('english')) |>
+    dfm() |>
+    dfm_trim(min_termfreq = 5, verbose = FALSE)
+
+head(dfmat_news)
+```
+
+**Estimate Latent Dirichlet Allocation (LDA) model**
+
+Set seed
+
+```{r}
+set.seed(852)
+```
+
+Specify the LDA model
+
+```{r}
+news_lda <- LDA(dfmat_news, k = 4)
+news_lda
+
+```
+
+Take a look at the "top words" (key terms in each topic with the highest likelihood).
+
+```{r}
+terms(news_lda, 10) #top ten
+```
+
+We can also visualize it
+
+```{r}
+#get the list of top words
+top_words <- tidy(news_lda, matrix = "beta") |>
+  group_by(topic) |>
+  slice_max(beta, n = 10) |> #n= number of top words
+  ungroup() |>
+  arrange(topic, -beta)
+
+top_words |>
+  mutate(term = reorder_within(term, beta, topic)) |>
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+```
+
+Get the list of most likely topics for each document
+
+```{r}
+dat$ldatopics <- topics(news_lda) 
+```
+
+Inspect the topic distribution
+
+```{r}
+table(dat$ldatopics) 
+```
+
+Get the beta for all topics for all documents
+
+```{r}
+toipc_est <- tidy(news_lda, matrix = "gamma")|>
+spread(key = "topic", value = "gamma") 
+head(toipc_est)
+```
+
+Merge with the original dataset
+
+```{r}
+dat$document <- attributes(corp_dat)$docvar$docname_  
+data_topic_est <- merge(dat, toipc_est, by="document") 
+head(data_topic_est, 10) 
+```
+
+## Find the optimal number of topics
+
+### Topic coherence and exclusivity approach with topicdoc package
+
+Load the library
+
+```{r}
+library("topicdoc")
+```
+
+Coherence
+
+```{r}
+topic_coherence(news_lda, dfmat_news)
+```
+
+Exclusivity
+
+```{r}
+topic_exclusivity(news_lda)
+```
+
+We can repeat the process to compare the statistics
+
+```{r}
+#To start with 2 topics
+
+news_lda <- LDA(dfmat_news, k = 2)
+
+coh <- mean(topic_coherence(news_lda, dfmat_news))
+exc <- mean(topic_exclusivity(news_lda))
+
+coh_exc <- data.frame(k = 2, coherence = coh, exclusivity = exc)
+coh_exc
+```
+
+![](images/clipboard-40922044.png)
+
+```{r}
+#The process can be repeated with a for loop
+
+for (k_topics in 3:8) {
+  news_lda <- LDA(dfmat_news, k = k_topics)
+  coh <- mean(topic_coherence(news_lda, dfmat_news))
+  exc <- mean(topic_exclusivity(news_lda))
+  #temp_df <- data.frame(k = k_topics, coherence = coh, exclusivity = exc)
+  coh_exc<-rbind(coh_exc,data.frame(k = k_topics, coherence = coh, exclusivity = exc))
+}
+```
+
+View the statistics in the "coh_exc" df
+
+```{r}
+coh_exc
+```
+
+```{r}
+ggplot(coh_exc, aes(x=coherence, y=exclusivity)) + 
+  geom_point() +
+  geom_text(label=coh_exc$k,aes(size=20,size.unit="pt"),show.legend=FALSE)
+```
+
+### Alternatively, there are a number of statistics we can reference to determine the best number of topics.
+
+Rule of thumb:
+
+-   minimization:
+
+    -   Arun2010
+
+    -   CaoJuan2009
+
+-   maximization:
+
+    -   Deveaud2014
+
+    -   Griffiths2004
+
+We would like to find the best balance between the statistics
+
+NOTE: This process is computationally expensive as it involves multiple model-fittings.
+
+Ref: <https://rpubs.com/siri/ldatuning>
+
+```{r}
+find_k <- FindTopicsNumber(
+  dfmat_news,
+  topics = seq(from = 2, to = 8),#, by = 3), #"by" for intervals 
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 77),
+  mc.cores = 2L,
+  verbose = TRUE
+)
+```
+
+```{r}
+FindTopicsNumber_plot(find_k)
+```
+
+### **Correlated Topic Models (CTM)**
+
+Topic proportions are correlated via the logistic normal distribution (Blei and Lafferty 2007).
+
+Set seed
+
+```{r}
+set.seed(852)
+```
+
+CTM model
+
+```{r}
+news_ctm <- CTM(dfmat_news, k = 4)
+```
+
+Examine the results
+
+```{r}
+terms(news_ctm, 10) #top ten
+```
+
+### Structural Topic Modeling
+
+Load the package
+
+```{r}
+library("stm")
+```
+
+Convert the dfm into the format for stm
+
+```{r}
+dfm_stm <- convert(dfmat_news, to = "stm")
+```
+
+STM model
+
+Base model without covariates
+
+```{r}
+news_stm <- stm(documents = dfm_stm$documents,
+         vocab = dfm_stm$vocab, 
+         K = 4,
+         verbose = TRUE)
+```
+
+STM model with covariates
+
+```{r}
+#convert date into a sequence of dates
+dfm_stm$meta$date<-format(as.Date(dfm_stm$meta$date,format="%Y-%m-%d"), format = "%d")
+dfm_stm$meta$date <- as.numeric(dfm_stm$meta$date)
+
+#source as factor (categorical)
+dfm_stm$meta$source <- as.factor(dfm_stm$meta$source)
+
+#STM model
+news_stm_cov <- stm(documents = dfm_stm$documents,
+             vocab = dfm_stm$vocab, 
+             K = 4,
+             prevalence = ~source + s(date),
+             data = dat,
+             verbose = TRUE) #s() for B-Spline Basis for Polynomial Splines
+
+```
+
+Examine the model
+
+```{r}
+plot(news_stm)
+```
+
+Examine the top words
+
+\#"FREX" terms are weighted: common exclusive words for a topic
+
+\#"Score" terms are from lda calcscore
+
+\#"Left" from maptpx package
+
+```{r}
+labelTopics(news_stm,topics = c(1:4), n=5) 
+```
+
+Obtain document-topic-matrix
+
+```{r}
+doc_topic_stm <- make.dt(news_stm_cov)
+doc_topic_stm
+```
+
+### Estimate the effect of covariates
+
+```{r}
+effect <- estimateEffect(formula=~ source+s(date), stmobj=news_stm_cov, metadata=dfm_stm$meta) 
+```
+
+Visualization
+
+More on: <https://warin.ca/shiny/stm/#section-visualize>
+
+For continuous defined variables
+
+```{r}
+plot(effect, "date", method = "continuous", topics = c(1:4), model = news_stm_cov, xlab = "Day")
+```
+
+For categorical variables
+
+```{r}
+plot(effect, covariate = "source", topics = c(4), model = news_stm_cov, method = "pointestimate", main = "Effect of news source", xlim = c(-0.5, 0.8))
+```
+
+Compare topical content
+
+```{r}
+plot(news_stm_cov, type = "perspectives", topics = c(2,3))
+```
+
+Word cloud of topics
+
+```{r}
+cloud(news_stm_cov, topic = 3, scale = c(2, 0.25))
+```
+
+#### SearchK using stm package
+
+Search the number of topics. Parameter "K" specify the topic numbers to be estimated. K=0 for automatic (algorithmic) search (not always the "best" solution)
+
+```{r}
+find_k <- searchK(dfm_stm$documents, dfm_stm$vocab, K = 2:6, verbose = TRUE)
+```
+
+Examine the statistics
+
+"exclus" is the exclusivity
+
+"semcoh" is the semantic coherence
+
+```{r}
+find_k
+```
+
+Plot the statistics
+
+```{r}
+plot.searchK(find_k)
+```
+
+#END
